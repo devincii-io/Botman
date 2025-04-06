@@ -6,13 +6,26 @@ from croniter import croniter
 import datetime
 import threading
 from .btm_types import BotMetrics, BotState
-from .events import EventManager, BotEvent
+from .events import BotEvent, GLOBAL_EVENT_MANAGER
 
 class Bot:
+    """Bot class representing a scheduled task or function."""
     def __init__(self, name: str, schedule: List[str] | str, function: Callable, 
                  slack_webhook: List[str] | str = None, chime_webhook: List[str] | str = None,
                  initial_timeout: int = 60, retries: int = 3, retry_delay: int = 10):
+        """
+        Initialize a Bot instance.
         
+        Args:
+            name: Name of the bot
+            schedule: Cron-style schedule(s) for when the bot should run
+            function: Callable to execute when the bot runs
+            slack_webhook: Optional Slack webhook(s) for notifications
+            chime_webhook: Optional Chime webhook(s) for notifications
+            initial_timeout: Timeout duration in seconds after failures
+            retries: Number of retries before entering timeout
+            retry_delay: Seconds to wait between retries
+        """
         self.schedule = schedule if isinstance(schedule, list) else [schedule]
         self.name = name
         self.function = function
@@ -32,17 +45,33 @@ class Bot:
         self.retries = retries
         self.retry_delay = retry_delay if retry_delay < 60 else 60
         self.timeout_until = None
-        self._lock = threading.Lock()  # Keep this lock for state transitions
-        self.event_manager = EventManager()
+        self._lock = threading.Lock()
+        self.event_manager = GLOBAL_EVENT_MANAGER
 
         for schedule in self.schedule:
             try:
-                croniter(schedule)  # Validate during initialization
+                croniter(schedule)
             except:
                 raise ValueError(f"Invalid schedule format: {schedule}")
     
+    def __del__(self):
+        """Clean up resources when the Bot is destroyed."""
+        if hasattr(self, 'event_manager'):
+            try:
+                self.event_manager.unsubscribe(self.name)
+            except:
+                pass
+    
     def run(self, set_last_run: bool = True):
-        # Check and update state atomically
+        """
+        Execute the bot's function with retry logic.
+        
+        Args:
+            set_last_run: Whether to update the last run time
+            
+        Returns:
+            Result from the function or SoftError in case of failure
+        """
         with self._lock:
             if self.metrics.state in [BotState.RUNNING, BotState.TIMEOUT]:
                 return False
@@ -59,7 +88,9 @@ class Bot:
                     if set_last_run:
                         self.metrics.last_run = datetime.datetime.now()
                     self.metrics.state = BotState.IDLE
-                    self.event_manager.publish(BotEvent(self.name, self.id, "info", "Bot completed", {}))
+                    self.event_manager.publish(BotEvent(self.name, self.id, "info", "Bot completed", {
+                        "result": result
+                    }))
                 return result
             except Exception as e:
                 current_try += 1
@@ -84,7 +115,7 @@ class Bot:
                             self.id, 
                             "error",
                             f"Bot entered timeout for {self.initial_timeout} seconds", 
-                            {"error": str(e), "timeout_seconds": self.initial_timeout}
+                            {"error": SoftError(self.name, self.id, str(e)), "timeout_seconds": self.initial_timeout}
                         ))
                     return SoftError(self.name, self.id, str(e))
 
@@ -100,14 +131,15 @@ class Bot:
             return False
 
     def add_schedule(self, schedule: str):
+        """Add a new schedule to the bot."""
         self.schedule.append(schedule)
 
     def remove_schedule(self, schedule: str):
+        """Remove a schedule from the bot."""
         self.schedule.remove(schedule)
 
     def get_next_run(self):
         """Get the next scheduled run time for this bot"""
-        # Check timeout state without lock since we only read
         if self.metrics.state == BotState.TIMEOUT and self.timeout_until:
             return self.timeout_until
             
@@ -125,23 +157,19 @@ class Bot:
                     runs.append(next_run)
             return min(runs)
         except Exception as e:
-            # In case of scheduling errors, return a time far in the future
             return datetime.datetime.now() + datetime.timedelta(hours=1)
 
     def is_due(self, set_last_run: bool = False):
         """Check if the bot is due to run"""
         with self._lock:
-            # If bot is running or in timeout, it's not due
             if self.metrics.state in [BotState.RUNNING, BotState.TIMEOUT]:
                 return False
         
-        # Get next run time outside the lock
         now = datetime.datetime.now()
         try:
             next_run = self.get_next_run()
             is_due = next_run <= now
             
-            # Update last_run if needed, under lock
             if is_due and set_last_run:
                 with self._lock:
                     self.metrics.last_run = now
@@ -151,5 +179,6 @@ class Bot:
             return False
 
     def set_last_run(self, last_run: datetime.datetime):
+        """Manually set the last run time."""
         with self._lock:
             self.metrics.last_run = last_run

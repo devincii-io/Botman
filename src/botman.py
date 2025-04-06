@@ -5,33 +5,97 @@ from .btm_types import BotMetrics, BotState
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import copy
-
-
+from .events import GLOBAL_EVENT_MANAGER, BotEvent
+import uuid
 
 class Botman:
+    """Main bot management class that coordinates bot execution and scheduling."""
     def __init__(self):
+        """Initialize a new Botman instance with an empty bot collection."""
         self.bots: list[Bot] = []
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="Botman")
         self.running = False
-        self._lock = threading.Lock()  # Keep this for start/stop synchronization
+        self._lock = threading.Lock()
+        self.id = str(uuid.uuid4())
+        self.name = "botman"
+        
+        if not GLOBAL_EVENT_MANAGER._running:
+            GLOBAL_EVENT_MANAGER.start()
 
     def add_bot(self, bot: Bot):
+        """
+        Add a bot to the manager.
+        
+        Args:
+            bot: The Bot instance to add
+        """
         with self._lock:
             self.bots.append(bot)
+            
+        GLOBAL_EVENT_MANAGER.publish(BotEvent(
+            self.name,
+            self.id,
+            "info",
+            f"Bot '{bot.name}' added to Botman",
+            {"bot_name": bot.name, "bot_id": str(bot.id)}
+        ))
     
     def remove_bot(self, bot: Bot):
+        """
+        Remove a bot from the manager.
+        
+        Args:
+            bot: The Bot instance to remove
+        """
         with self._lock:
-            self.bots.remove(bot)
+            if bot in self.bots:
+                GLOBAL_EVENT_MANAGER.unsubscribe(bot.name)
+                self.bots.remove(bot)
+                
+                GLOBAL_EVENT_MANAGER.publish(BotEvent(
+                    self.name,
+                    self.id,
+                    "info",
+                    f"Bot '{bot.name}' removed from Botman",
+                    {"bot_name": bot.name, "bot_id": str(bot.id)}
+                ))
 
     def run_bot(self, bot: Bot):
+        """
+        Run a single bot in a separate thread.
+        
+        Args:
+            bot: The Bot instance to run
+            
+        Returns:
+            Future object representing the pending execution
+        """
+        GLOBAL_EVENT_MANAGER.publish(BotEvent(
+            self.name,
+            self.id,
+            "debug",
+            f"Running bot '{bot.name}'",
+            {"bot_name": bot.name, "bot_id": str(bot.id)}
+        ))
+        
         future = self._executor.submit(bot.run)
         return future
 
     def run_all_bots(self):
+        """Run all bots in the order they were added."""
+        GLOBAL_EVENT_MANAGER.publish(BotEvent(
+            self.name,
+            self.id,
+            "info",
+            "Running all bots",
+            {"bot_count": len(self.bots)}
+        ))
+        
         for bot in self.bots:
             self.run_bot(bot)
 
     def _loop(self):
+        """Main scheduling loop that checks for due bots and runs them."""
         while self.running:
             now = datetime.datetime.now()
             next_times = []
@@ -49,6 +113,13 @@ class Botman:
                         
                     if bot.is_due(False):
                         bots_to_run.append(bot)
+                        GLOBAL_EVENT_MANAGER.publish(BotEvent(
+                            self.name,
+                            self.id,
+                            "debug",
+                            f"Bot '{bot.name}' is scheduled to run",
+                            {"bot_name": bot.name, "bot_id": str(bot.id), "scheduled_time": str(now)}
+                        ))
                     else:
                         next_times.append(bot.get_next_run())
             
@@ -66,24 +137,83 @@ class Botman:
             time.sleep(sleep_time)
     
     def start(self):
+        """Start the bot manager and begin the scheduling loop."""
         with self._lock:
             if self.running:
-                return  # Already running
+                return
             self.running = True
+            
+            GLOBAL_EVENT_MANAGER.publish(BotEvent(
+                self.name,
+                self.id,
+                "info",
+                "Botman started",
+                {"bot_count": len(self.bots)}
+            ))
+            
             self._executor.submit(self._loop)
 
     def stop(self):
+        """Stop the bot manager and clean up resources."""
         with self._lock:
+            if not self.running:
+                return
+                
             self.running = False
+            
+            GLOBAL_EVENT_MANAGER.publish(BotEvent(
+                self.name,
+                self.id,
+                "info",
+                "Botman stopping",
+                {"bot_count": len(self.bots)}
+            ))
+            
         self._executor.shutdown(wait=True)
+        
+        GLOBAL_EVENT_MANAGER.publish(BotEvent(
+            self.name,
+            self.id,
+            "info",
+            "Botman stopped",
+            {"shutdown_time": str(datetime.datetime.now())}
+        ))
 
     def get_bot_metrics(self) -> list[BotMetrics]:
+        """
+        Get metrics for all managed bots.
+        
+        Returns:
+            List of BotMetrics objects for all bots
+        """
         with self._lock:
             return [copy.deepcopy(bot.metrics) for bot in self.bots]
     
     def get_bot_metrics_by_name(self, name: str) -> BotMetrics:
+        """
+        Get metrics for a specific bot by name.
+        
+        Args:
+            name: Name of the bot to get metrics for
+            
+        Returns:
+            BotMetrics for the specified bot or None if not found
+        """
         with self._lock:
             for bot in self.bots:
                 if bot.name == name:
                     return copy.deepcopy(bot.metrics)
         return None
+        
+    def set_name(self, name: str):
+        """
+        Set a custom name for this Botman instance.
+        
+        Args:
+            name: New name for the Botman instance
+        """
+        self.name = name
+        
+    def __del__(self):
+        """Ensure everything is cleaned up when Botman is destroyed."""
+        self.stop()

@@ -116,6 +116,11 @@ ipython_config.py
 .pdm.toml
 .pdm-python
 .pdm-build/
+test_schedule_behavior.py
+
+chime_slack_server.py
+event_subscriber.py
+test.py
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/

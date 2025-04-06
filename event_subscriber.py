@@ -6,26 +6,68 @@ import datetime
 import random
 import logging
 import threading
+import json
+import locale
 from typing import Dict, List, Any
+from collections import defaultdict, Counter
 
 # Add the parent directory to path so we can import from src
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src import Bot, Botman
-from src import BotEvent, EventManager
+from src import BotEvent
 from src import BotState
+from src.events import GLOBAL_EVENT_MANAGER, EventType
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("test_comprehensive.log"),
-        logging.StreamHandler()
-    ]
-)
+# Set up logging with proper encoding for Windows
+# Check if we can use Unicode in this terminal
+try:
+    # Force UTF-8 for file output
+    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler = logging.FileHandler("test_comprehensive.log", encoding='utf-8')
+    file_handler.setFormatter(log_formatter)
+    
+    # For console output, use simpler formatting without emojis if on Windows
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(log_formatter)
+    
+    logger = logging.getLogger("BotTest")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    # Clear any default handlers
+    logger.propagate = False
+except Exception as e:
+    # Fallback to basic logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("test_comprehensive.log"),
+            logging.StreamHandler()
+        ]
+    )
+    logger = logging.getLogger("BotTest")
 
-logger = logging.getLogger("BotTest")
+# Check if we can use emoji
+try:
+    # Test if console can handle emoji
+    USE_EMOJI = True
+    if sys.platform == 'win32':
+        # Windows often has encoding issues with emoji
+        USE_EMOJI = False
+except:
+    USE_EMOJI = False
+
+# Status symbols - with fallbacks for terminals that don't support Unicode
+STATUS_SUCCESS = "✓" if USE_EMOJI else "[SUCCESS]"
+STATUS_ERROR = "✗" if USE_EMOJI else "[ERROR]"
+STATUS_WARNING = "!" if USE_EMOJI else "[WARNING]"
+STATUS_INFO = "i" if USE_EMOJI else "[INFO]"
+STATUS_RUNNING = ">" if USE_EMOJI else "[RUNNING]"
+STATUS_IDLE = "•" if USE_EMOJI else "[IDLE]"
+STATUS_TIMEOUT = "T" if USE_EMOJI else "[TIMEOUT]"
 
 # Global test state
 test_start_time = datetime.datetime.now()
@@ -34,10 +76,105 @@ bot_failure_counts = {}
 bot_execution_times = {}
 events_received = []
 
+# Statistics tracking
+class EventStatistics:
+    def __init__(self):
+        self.event_counts = Counter()
+        self.event_types = Counter()
+        self.errors_by_bot = defaultdict(int)
+        self.successes_by_bot = defaultdict(int)
+        self.bot_states = {}
+        self.recent_events = []  # Keep most recent events
+        self.last_update = datetime.datetime.now()
+        self._lock = threading.Lock()
+    
+    def record_event(self, event: BotEvent):
+        with self._lock:
+            self.event_counts[event.bot_name] += 1
+            self.event_types[event.type] += 1
+            
+            # Track bot state through events
+            if "Bot started" in event.description:
+                self.bot_states[event.bot_name] = "RUNNING"
+            elif "Bot completed" in event.description:
+                self.bot_states[event.bot_name] = "IDLE"
+                self.successes_by_bot[event.bot_name] += 1
+            elif "entered timeout" in event.description:
+                self.bot_states[event.bot_name] = "TIMEOUT"
+            elif "Bot failed" in event.description and event.type == "error":
+                self.errors_by_bot[event.bot_name] += 1
+            
+            # Keep the 20 most recent events
+            self.recent_events.append({
+                'time': datetime.datetime.now().strftime("%H:%M:%S"),
+                'bot': event.bot_name,
+                'type': event.type,
+                'description': event.description
+            })
+            if len(self.recent_events) > 20:
+                self.recent_events.pop(0)
+            
+            self.last_update = datetime.datetime.now()
+    
+    def print_summary(self):
+        with self._lock:
+            logger.info("=" * 60)
+            logger.info("EVENT STATISTICS SUMMARY")
+            logger.info("=" * 60)
+            
+            logger.info("\nEvents by bot:")
+            for bot_name, count in self.event_counts.most_common():
+                logger.info(f"  {bot_name}: {count} events")
+            
+            logger.info("\nEvents by type:")
+            for event_type, count in self.event_types.most_common():
+                logger.info(f"  {event_type}: {count} events")
+            
+            logger.info("\nErrors by bot:")
+            for bot_name, count in sorted(self.errors_by_bot.items(), key=lambda x: x[1], reverse=True):
+                if count > 0:
+                    logger.info(f"  {bot_name}: {count} errors")
+            
+            logger.info("\nSuccesses by bot:")
+            for bot_name, count in sorted(self.successes_by_bot.items(), key=lambda x: x[1], reverse=True):
+                logger.info(f"  {bot_name}: {count} successful runs")
+            
+            logger.info("\nCurrent bot states:")
+            for bot_name, state in sorted(self.bot_states.items()):
+                logger.info(f"  {bot_name}: {state}")
+            
+            logger.info("\nRecent events:")
+            for i, event in enumerate(reversed(self.recent_events[:10]), 1):
+                logger.info(f"  {i}. [{event['time']}] {event['bot']} - {event['type']}: {event['description']}")
+            
+            logger.info("=" * 60)
+
+# Create statistics tracker
+stats = EventStatistics()
+
 # Event listeners to track all bot events
 def log_event(event: BotEvent):
     events_received.append(event)
     logger.info(f"Event: {event.type} - {event.bot_name} - {event.description}")
+    stats.record_event(event)
+
+# Specific handlers for different event types
+def handle_info_event(event: BotEvent):
+    if "completed" in event.description:
+        logger.info(f"{STATUS_SUCCESS} SUCCESS: {event.bot_name} completed successfully")
+
+def handle_error_event(event: BotEvent):
+    error_details = event.data.get('error', 'Unknown error')
+    logger.error(f"{STATUS_ERROR} ERROR: {event.bot_name} - {error_details}")
+
+def handle_warning_event(event: BotEvent):
+    logger.warning(f"{STATUS_WARNING} WARNING: {event.bot_name} - {event.description}")
+
+# Specific handler for Botman events
+def handle_botman_event(event: BotEvent):
+    logger.info(f"{STATUS_INFO} BOTMAN EVENT: {event.description}")
+    logger.info(f"  Details: {event.data}")
+    stats.record_event(event)
 
 # Test bots with different behaviors
 
@@ -229,33 +366,37 @@ def create_test_bots():
     )
     bots.append(multiple_schedule_bot)
     
-    # Set up event listeners for all bots
+    # Set up event listeners for all bots - now using the global event manager
     for bot in bots:
-        bot.event_manager.start()
-        bot.event_manager.subscribe(bot.name, log_event)
+        # Subscribe to different event types with specific handlers
+        GLOBAL_EVENT_MANAGER.subscribe(bot.name, log_event)
+        GLOBAL_EVENT_MANAGER.subscribe(bot.name, handle_info_event, "info")
+        GLOBAL_EVENT_MANAGER.subscribe(bot.name, handle_error_event, "error")
+        GLOBAL_EVENT_MANAGER.subscribe(bot.name, handle_warning_event, "warning")
     
     return bots
 
 # Run a manual forced execution of all bots once
 def force_execution(botman, bots):
-    logger.info("Forcing execution of all bots...")
+    logger.info(f"{STATUS_INFO} Forcing execution of all bots...")
     for bot in bots:
-        logger.info(f"Forcing execution of {bot.name}")
+        logger.info(f"=> Forcing execution of {bot.name}")
         botman.run_bot(bot)
     
-    logger.info("Forced execution complete")
+    logger.info(f"{STATUS_SUCCESS} Forced execution complete")
 
 # Monitor function to log bot states
 def monitor_bots(botman, bots, interval=30):
     while True:
-        logger.info("-" * 50)
-        logger.info("Bot Status Report")
-        logger.info("-" * 50)
+        logger.info("-" * 60)
+        logger.info(f"{STATUS_INFO} BOT STATUS REPORT")
+        logger.info("-" * 60)
         
         for bot in bots:
             metrics = botman.get_bot_metrics_by_name(bot.name)
             if metrics:
-                logger.info(f"Bot: {bot.name}")
+                state_icon = STATUS_IDLE if metrics.state == BotState.IDLE else STATUS_TIMEOUT if metrics.state == BotState.TIMEOUT else STATUS_RUNNING
+                logger.info(f"{state_icon} Bot: {bot.name}")
                 logger.info(f"  State: {metrics.state}")
                 logger.info(f"  Runs: {metrics.runs}")
                 logger.info(f"  Errors: {metrics.errors}")
@@ -263,33 +404,68 @@ def monitor_bots(botman, bots, interval=30):
                 
                 # Check if in timeout
                 if metrics.state == BotState.TIMEOUT:
-                    logger.info(f"  Timeout until: {bot.timeout_until}")
+                    timeout_remaining = (bot.timeout_until - datetime.datetime.now()).total_seconds()
+                    logger.info(f"  Timeout until: {bot.timeout_until} ({int(timeout_remaining)}s remaining)")
                     
                 # Get next scheduled run
                 try:
                     next_run = bot.get_next_run()
-                    logger.info(f"  Next Run: {next_run}")
+                    time_until_next = (next_run - datetime.datetime.now()).total_seconds()
+                    logger.info(f"  Next Run: {next_run} (in {int(time_until_next)}s)")
                 except Exception as e:
                     logger.error(f"  Error getting next run: {e}")
         
-        logger.info("-" * 50)
+        # Print event statistics
+        stats.print_summary()
+        
+        logger.info("-" * 60)
+        time.sleep(interval)
+
+def statistics_monitor(interval=30):
+    """Monitor and log statistics regularly"""
+    while True:
+        # Print stats to console
+        stats.print_summary()
         time.sleep(interval)
 
 def main():
+    # Make sure global event manager is started
+    if not GLOBAL_EVENT_MANAGER._running:
+        GLOBAL_EVENT_MANAGER.start()
+    
     # Create bots
     bots = create_test_bots()
     
-    # Create Botman instance
+    # Create Botman instance with custom name
     botman = Botman()
+    botman.set_name("TestBotman")  # Give it a custom name
+    
+    # Subscribe to Botman events
+    GLOBAL_EVENT_MANAGER.subscribe(botman.name, handle_botman_event)
+    
+    # Add all bots to the manager
     for bot in bots:
         botman.add_bot(bot)
     
-    # Start the monitor in a separate thread
+    # Start the monitoring threads
     monitor_thread = threading.Thread(target=monitor_bots, args=(botman, bots, 60))
     monitor_thread.daemon = True
     monitor_thread.start()
     
-    logger.info("Starting Botman...")
+    # Starting the statistics monitoring in its own thread
+    stats_thread = threading.Thread(target=statistics_monitor, args=(120,))  # every 2 minutes
+    stats_thread.daemon = True
+    stats_thread.start()
+    
+    # Print welcome message
+    logger.info("=" * 70)
+    logger.info(f"{STATUS_INFO} BOTMAN TEST HARNESS - Starting at {datetime.datetime.now()}")
+    logger.info(f"{STATUS_INFO} Total bots: {len(bots)}")
+    logger.info(f"{STATUS_INFO} Test duration: 20 minutes")
+    logger.info("=" * 70)
+    
+    # Start Botman
+    logger.info(f"{STATUS_INFO} Starting Botman...")
     botman.start()
     
     # Force execute all bots immediately to verify they work
@@ -297,24 +473,25 @@ def main():
     
     # Run for 20 minutes
     test_duration = 20 * 60  # 20 minutes in seconds
-    logger.info(f"Test will run for {test_duration} seconds")
+    logger.info(f"{STATUS_INFO} Test will run for {test_duration} seconds")
     
     try:
         # Wait for the test duration
         time.sleep(test_duration)
     except KeyboardInterrupt:
-        logger.info("Test interrupted by user")
+        logger.info(f"{STATUS_WARNING} Test interrupted by user")
     finally:
-        logger.info("Stopping Botman...")
+        logger.info(f"{STATUS_INFO} Stopping Botman...")
         botman.stop()
         
         # Wait for any pending events
-        for bot in bots:
-            bot.event_manager.wait_until_empty(timeout=5.0)
-            bot.event_manager.stop()
+        GLOBAL_EVENT_MANAGER.wait_until_empty(timeout=5.0)
+        # Don't stop the global event manager here as it might be needed by other components
         
         # Final report
-        logger.info("=== Final Test Report ===")
+        logger.info("=" * 70)
+        logger.info(f"{STATUS_INFO} FINAL TEST REPORT")
+        logger.info("=" * 70)
         logger.info(f"Test Duration: {datetime.datetime.now() - test_start_time}")
         logger.info(f"Total Events Received: {len(events_received)}")
         logger.info("Event Counts by Type:")
@@ -328,7 +505,12 @@ def main():
         for event_type, count in event_types.items():
             logger.info(f"  {event_type}: {count}")
         
-        logger.info("=== End of Test ===")
+        # Print final statistics
+        stats.print_summary()
+        
+        logger.info("=" * 70)
+        logger.info(f"{STATUS_SUCCESS} Test completed successfully")
+        logger.info("=" * 70)
 
 if __name__ == "__main__":
     main() 
