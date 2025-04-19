@@ -23,7 +23,7 @@ class EventManager:
         self._lock = threading.Lock()
         self._worker_thread = None
     
-    def subscribe(self, bot_name: str, callback: callable, event_type: Optional[EventType] = None):
+    def subscribe(self, bot_name: str, callback: callable, event_types: Optional[list[EventType]] = None):
         """
         Subscribe to events from a bot.
         
@@ -36,14 +36,15 @@ class EventManager:
             if bot_name not in self.subscriptions:
                 self.subscriptions[bot_name] = {}
             
-            if event_type is None:
+            if event_types is None:
                 if "all" not in self.subscriptions[bot_name]:
                     self.subscriptions[bot_name]["all"] = []
                 self.subscriptions[bot_name]["all"].append(callback)
             else:
-                if event_type not in self.subscriptions[bot_name]:
-                    self.subscriptions[bot_name][event_type] = []
-                self.subscriptions[bot_name][event_type].append(callback)
+                for event_type in event_types:
+                    if event_type not in self.subscriptions[bot_name]:
+                        self.subscriptions[bot_name][event_type] = []
+                    self.subscriptions[bot_name][event_type].append(callback)
 
     def publish(self, event: BotEvent):
         """Add an event to the queue for processing."""

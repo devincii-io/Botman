@@ -5,7 +5,7 @@ from .btm_types import BotMetrics, BotState
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import copy
-from .events import GLOBAL_EVENT_MANAGER, BotEvent
+from .events import GLOBAL_EVENT_MANAGER, BotEvent, SlackEventReceiver, ChimeEventReceiver, EventType 
 import uuid
 
 class Botman:
@@ -18,6 +18,8 @@ class Botman:
         self._lock = threading.Lock()
         self.id = str(uuid.uuid4())
         self.name = "botman"
+        self._slack_subscribers = []
+        self._chime_subscribers = []
         
         if not GLOBAL_EVENT_MANAGER._running:
             GLOBAL_EVENT_MANAGER.start()
@@ -40,6 +42,29 @@ class Botman:
             {"bot_name": bot.name, "bot_id": str(bot.id)}
         ))
     
+    def subscribe_slack_webhook(self, webhook: str, event_types: list[EventType] = None):
+        """
+        Subscribe to a Slack webhook.
+        
+        Args:
+            webhook: The Slack webhook to subscribe to
+        """
+        with self._lock:
+            self._slack_subscribers.append(webhook)
+            GLOBAL_EVENT_MANAGER.subscribe(self.name, SlackEventReceiver(webhook).on_event, event_types)
+    
+    def subscribe_chime_webhook(self, webhook: str, event_types: list[EventType] = None):
+        """
+        Subscribe to a Chime webhook.
+        
+        Args:
+            webhook: The Chime webhook to subscribe to
+        """
+        with self._lock:
+            self._chime_subscribers.append(webhook)
+            GLOBAL_EVENT_MANAGER.subscribe(self.name, ChimeEventReceiver(webhook).on_event, event_types)
+    
+
     def remove_bot(self, bot: Bot):
         """
         Remove a bot from the manager.
