@@ -22,4 +22,12 @@ class SoftError():
         """Return a string representation of the error."""
         return f"{self.bot_name} ({self.bot_id}) - {self.message}"
     
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "bot_name": self.bot_name,
+            "bot_id": str(self.bot_id),
+            "message": self.message
+        }
+    
 

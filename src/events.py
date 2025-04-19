@@ -1,8 +1,8 @@
 from typing import Literal, Optional
 import queue
 import threading
-import time
-
+import atexit
+import requests
 EventType = Literal["error", "info", "warning", "debug"]
 
 class BotEvent:
@@ -10,7 +10,7 @@ class BotEvent:
     def __init__(self, bot_name: str, bot_id: str, type: EventType, description: str, data: dict):
         self.bot_name = bot_name
         self.bot_id = bot_id
-        self.type = type
+        self.event_type = type
         self.description = description
         self.data = data
 
@@ -57,8 +57,8 @@ class EventManager:
                 
                 with self._lock:
                     if event.bot_name in self.subscriptions:
-                        if event.type in self.subscriptions[event.bot_name]:
-                            for callback in self.subscriptions[event.bot_name][event.type]:
+                        if event.event_type in self.subscriptions[event.bot_name]:
+                            for callback in self.subscriptions[event.bot_name][event.event_type]:
                                 try:
                                     callback(event)
                                 except Exception as e:
@@ -150,7 +150,6 @@ class EventManager:
 GLOBAL_EVENT_MANAGER = EventManager()
 GLOBAL_EVENT_MANAGER.start()
 
-import atexit
 
 def cleanup():
     """Stop the global event manager at program exit."""
@@ -158,3 +157,45 @@ def cleanup():
 
 atexit.register(cleanup)
 
+
+
+class SlackEventReceiver:
+    def __init__(self, webhook: str):
+        self.webhook = webhook
+        self.event_emoji = {
+            "error": "🚨",
+            "info": "ℹ️",
+            "warning": "⚠️",
+            "debug": "🔍"
+        }   
+
+    def on_event(self, event: BotEvent):
+        formatted_event = {
+            "bot_name": event.bot_name,
+            "bot_id": str(event.bot_id),
+            "event_type": event.event_type,
+            "description": event.description,
+            "emoji": self.event_emoji.get(event.event_type, ""),
+            "data": event.data
+        }
+        
+        requests.post(self.webhook, json=formatted_event)
+
+
+class ChimeEventReceiver:
+    def __init__(self, webhook: str):
+        self.webhook = webhook
+        self.event_emoji = {
+            "error": "🚨",
+            "info": "ℹ️",
+            "warning": "⚠️",
+            "debug": "🔍"
+        }   
+
+    def on_event(self, event: BotEvent):
+        formatted_markdown_event = f"""/md
+        {event.event_type} {self.event_emoji.get(event.event_type, "")}
+        {event.bot_name}
+        {event.description}
+        """
+        requests.post(self.webhook, json={"content": formatted_markdown_event})

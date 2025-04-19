@@ -174,7 +174,7 @@ class Botman:
         GLOBAL_EVENT_MANAGER.publish(BotEvent(
             self.name,
             self.id,
-            "info",
+            "info", 
             "Botman stopped",
             {"shutdown_time": str(datetime.datetime.now())}
         ))

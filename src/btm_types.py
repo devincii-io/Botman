@@ -8,7 +8,6 @@ class BotState(Enum):
     TIMEOUT = "timeout"
     ERROR = "error"
 
-
 @dataclass
 class BotMetrics:
     runs: int
@@ -16,4 +15,3 @@ class BotMetrics:
     last_run: datetime.datetime
     since: datetime.datetime = field(default_factory=datetime.datetime.now)
     state: BotState = field(default=BotState.IDLE)
-

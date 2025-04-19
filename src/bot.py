@@ -6,12 +6,17 @@ from croniter import croniter
 import datetime
 import threading
 from .btm_types import BotMetrics, BotState
-from .events import BotEvent, GLOBAL_EVENT_MANAGER
+from .events import BotEvent, GLOBAL_EVENT_MANAGER, SlackEventReceiver, ChimeEventReceiver
+from typing import Literal
+
+EventType = Literal["error", "info", "warning", "debug"]
+
 
 class Bot:
     """Bot class representing a scheduled task or function."""
     def __init__(self, name: str, schedule: List[str] | str, function: Callable, 
                  slack_webhook: List[str] | str = None, chime_webhook: List[str] | str = None,
+                 slack_event_types: List[EventType] | EventType = None, chime_event_types: List[EventType] | EventType = None,
                  initial_timeout: int = 60, retries: int = 3, retry_delay: int = 10):
         """
         Initialize a Bot instance.
@@ -22,6 +27,8 @@ class Bot:
             function: Callable to execute when the bot runs
             slack_webhook: Optional Slack webhook(s) for notifications
             chime_webhook: Optional Chime webhook(s) for notifications
+            slack_event_types: Optional Slack event types to subscribe to
+            chime_event_types: Optional Chime event types to subscribe to
             initial_timeout: Timeout duration in seconds after failures
             retries: Number of retries before entering timeout
             retry_delay: Seconds to wait between retries
@@ -31,8 +38,11 @@ class Bot:
         self.function = function
         self.init_time = datetime.datetime.now()
         self.id = uuid4()
-        self.slack_webhook = slack_webhook if isinstance(slack_webhook, list) else [slack_webhook]
-        self.chime_webhook = chime_webhook if isinstance(chime_webhook, list) else [chime_webhook]
+        self.slack_webhook = (slack_webhook, slack_event_types) if slack_webhook else None
+        self.chime_webhook = (chime_webhook, chime_event_types) if chime_webhook else None
+        self._slack_event_subs = []
+        self._chime_event_subs = []
+
         self.metrics = BotMetrics(
             errors=0,
             runs=0,
@@ -54,14 +64,52 @@ class Bot:
             except:
                 raise ValueError(f"Invalid schedule format: {schedule}")
     
+    @property
+    def slack_webhook(self):
+        return self._slack_webhook
+    
+    @slack_webhook.setter
+    def slack_webhook(self, webhook_event_types: tuple[str, List[EventType] | EventType]):
+        if not webhook_event_types:
+            self._slack_webhook = None
+            self._slack_event_subs = []
+            return
+        self._slack_webhook = webhook_event_types[0] if isinstance(webhook_event_types[0], list) else [webhook_event_types[0]]
+        self._slack_event_subs = [SlackEventReceiver(webhook).on_event for webhook in self._slack_webhook]
+        for sub in self._slack_event_subs:
+           GLOBAL_EVENT_MANAGER.subscribe(self.name, sub, webhook_event_types[1] if webhook_event_types[1] else None)
+
+    @property
+    def chime_webhook(self):
+        return self._chime_webhook
+    
+    @chime_webhook.setter
+    def chime_webhook(self, webhook_event_types: tuple[str, List[EventType] | EventType]):
+        if not webhook_event_types:
+            self._chime_webhook = None
+            self._chime_event_subs = []
+            return
+        self._chime_webhook = webhook_event_types[0] if isinstance(webhook_event_types[0], list) else [webhook_event_types[0]]
+        self._chime_event_subs = [ChimeEventReceiver(webhook).on_event for webhook in self._chime_webhook]
+        for sub in self._chime_event_subs:
+            GLOBAL_EVENT_MANAGER.subscribe(self.name, sub, webhook_event_types[1] if webhook_event_types[1] else None)
+
     def __del__(self):
         """Clean up resources when the Bot is destroyed."""
-        if hasattr(self, 'event_manager'):
+        if hasattr(self, '_slack_event_subs'):
             try:
-                self.event_manager.unsubscribe(self.name)
+                for sub in self._slack_event_subs:
+                    GLOBAL_EVENT_MANAGER.unsubscribe(self.name, sub)
+            except:
+                pass    
+        if hasattr(self, '_chime_event_subs'):
+            try:
+                for sub in self._chime_event_subs:
+                    GLOBAL_EVENT_MANAGER.unsubscribe(self.name, sub)
             except:
                 pass
     
+
     def run(self, set_last_run: bool = True):
         """
         Execute the bot's function with retry logic.
@@ -97,8 +145,8 @@ class Bot:
                 self.metrics.errors += 1
                 
                 self.event_manager.publish(BotEvent(
-                    self.name, 
-                    self.id, 
+                    self.name,
+                    self.id,
                     "warning" if current_try < self.retries else "error",
                     f"Bot failed (attempt {current_try}/{self.retries})", 
                     {"error": str(e), "attempt": current_try, "retries": self.retries}
@@ -115,7 +163,7 @@ class Bot:
                             self.id, 
                             "error",
                             f"Bot entered timeout for {self.initial_timeout} seconds", 
-                            {"error": SoftError(self.name, self.id, str(e)), "timeout_seconds": self.initial_timeout}
+                            {"error": SoftError(self.name, self.id, str(e)).to_dict(), "timeout_seconds": self.initial_timeout}
                         ))
                     return SoftError(self.name, self.id, str(e))
 
