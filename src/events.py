@@ -41,6 +41,8 @@ class EventManager:
                     self.subscriptions[bot_name]["all"] = []
                 self.subscriptions[bot_name]["all"].append(callback)
             else:
+                if not isinstance(event_types, list):
+                    event_types = [event_types]
                 for event_type in event_types:
                     if event_type not in self.subscriptions[bot_name]:
                         self.subscriptions[bot_name][event_type] = []
@@ -109,32 +111,35 @@ class EventManager:
         except Exception:
             pass
     
-    def unsubscribe(self, bot_name: str, callback: callable = None, event_type: Optional[EventType] = None):
+    def unsubscribe(self, bot_name: str, callback: callable = None, event_types: Optional[list[EventType]] = None):
         """
         Unsubscribe from events.
         
         Args:
             bot_name: Name of the bot to unsubscribe from
             callback: Specific callback to remove (None to remove all)
-            event_type: Specific event type to unsubscribe from (None for all types)
+            event_types: Specific event types to unsubscribe from (None for all types)
         """
         with self._lock:
             if bot_name not in self.subscriptions:
                 return
                 
-            if callback is None and event_type is None:
+            if callback is None and event_types is None:
                 del self.subscriptions[bot_name]
                 return
                 
-            if event_type is not None:
-                if event_type in self.subscriptions[bot_name]:
-                    if callback is None:
-                        del self.subscriptions[bot_name][event_type]
-                    else:
-                        self.subscriptions[bot_name][event_type] = [
-                            cb for cb in self.subscriptions[bot_name][event_type] 
-                            if cb != callback
-                        ]
+            if event_types:
+                if not isinstance(event_types, list):
+                    event_types = [event_types]
+                for event_type in event_types:
+                    if event_type in self.subscriptions[bot_name]:
+                        if callback is None:
+                            del self.subscriptions[bot_name][event_type]
+                        else:
+                            self.subscriptions[bot_name][event_type] = [
+                                cb for cb in self.subscriptions[bot_name][event_type] 
+                                if cb != callback
+                            ]
             else:
                 for event_type in list(self.subscriptions[bot_name].keys()):
                     self.subscriptions[bot_name][event_type] = [
