@@ -1,10 +1,11 @@
 import time
-from typing import Callable, List
+from typing import Callable, List, Union, Optional
 from .exceptions import SoftError
 from uuid import uuid4
 from croniter import croniter
 import datetime
 import threading
+import atexit
 from .btm_types import BotMetrics, BotState
 from .events import BotEvent, GLOBAL_EVENT_MANAGER, SlackEventReceiver, ChimeEventReceiver
 from typing import Literal
@@ -38,10 +39,16 @@ class Bot:
         self.function = function
         self.init_time = datetime.datetime.now()
         self.id = uuid4()
-        self.slack_webhook = (slack_webhook, slack_event_types) if slack_webhook else None
-        self.chime_webhook = (chime_webhook, chime_event_types) if chime_webhook else None
-        self._slack_event_subs = []
-        self._chime_event_subs = []
+        
+        # Initialize webhook subscriptions tracking
+        self._webhook_subscriptions = []
+        
+        # Setup webhooks
+        if slack_webhook:
+            self.add_webhook_subscriptions(slack_webhook, slack_event_types, SlackEventReceiver)
+        
+        if chime_webhook:
+            self.add_webhook_subscriptions(chime_webhook, chime_event_types, ChimeEventReceiver)
 
         self.metrics = BotMetrics(
             errors=0,
@@ -58,57 +65,78 @@ class Bot:
         self._lock = threading.Lock()
         self.event_manager = GLOBAL_EVENT_MANAGER
 
+        # Register cleanup handler
+        atexit.register(self.shutdown)
+
         for schedule in self.schedule:
             try:
                 croniter(schedule)
             except:
                 raise ValueError(f"Invalid schedule format: {schedule}")
     
-    @property
-    def slack_webhook(self):
-        return self._slack_webhook
-    
-    @slack_webhook.setter
-    def slack_webhook(self, webhook_event_types: tuple[str, List[EventType] | EventType]):
-        if not webhook_event_types:
-            self._slack_webhook = None
-            self._slack_event_subs = []
+    def add_webhook_subscriptions(self, webhooks: Union[List[str], str], 
+                                  event_types: Optional[Union[List[EventType], EventType]], 
+                                  receiver_class: type):
+        """
+        Add webhook subscriptions using the specified receiver class.
+        
+        Args:
+            webhooks: Single webhook URL or list of webhook URLs
+            event_types: Event types to subscribe to
+            receiver_class: The webhook receiver class to use (SlackEventReceiver, ChimeEventReceiver, etc.)
+        """
+        if not webhooks:
             return
-        self._slack_webhook = webhook_event_types[0] if isinstance(webhook_event_types[0], list) else [webhook_event_types[0]]
-        self._slack_event_subs = [SlackEventReceiver(webhook).on_event for webhook in self._slack_webhook]
-        for sub in self._slack_event_subs:
-           GLOBAL_EVENT_MANAGER.subscribe(self.name, sub, webhook_event_types[1] if webhook_event_types[1] else None)
-
-    @property
-    def chime_webhook(self):
-        return self._chime_webhook
+            
+        webhooks = webhooks if isinstance(webhooks, list) else [webhooks]
+        
+        for webhook in webhooks:
+            receiver = receiver_class(webhook)
+            GLOBAL_EVENT_MANAGER.subscribe(self.name, receiver.on_event, event_types)
+            self._webhook_subscriptions.append((self.name, receiver.on_event))
     
-    @chime_webhook.setter
-    def chime_webhook(self, webhook_event_types: tuple[str, List[EventType] | EventType]):
-        if not webhook_event_types:
-            self._chime_webhook = None
-            self._chime_event_subs = []
-            return
-        self._chime_webhook = webhook_event_types[0] if isinstance(webhook_event_types[0], list) else [webhook_event_types[0]]
-        self._chime_event_subs = [ChimeEventReceiver(webhook).on_event for webhook in self._chime_webhook]
-        for sub in self._chime_event_subs:
-            GLOBAL_EVENT_MANAGER.subscribe(self.name, sub, webhook_event_types[1] if webhook_event_types[1] else None)
-
-    def __del__(self):
-        """Clean up resources when the Bot is destroyed."""
-        if hasattr(self, '_slack_event_subs'):
+    def remove_webhook_subscriptions(self):
+        """Remove all webhook subscriptions."""
+        for bot_name, callback in self._webhook_subscriptions:
             try:
-                for sub in self._slack_event_subs:
-                    GLOBAL_EVENT_MANAGER.unsubscribe(self.name, sub)
-            except:
-                pass    
-        if hasattr(self, '_chime_event_subs'):
-            try:
-                for sub in self._chime_event_subs:
-                    GLOBAL_EVENT_MANAGER.unsubscribe(self.name, sub)
+                GLOBAL_EVENT_MANAGER.unsubscribe(bot_name, callback)
             except:
                 pass
+        self._webhook_subscriptions = []
     
+    # Public methods for adding specific webhook types
+    def add_slack_webhook(self, webhook: Union[List[str], str], 
+                         event_types: Optional[Union[List[EventType], EventType]] = None):
+        """
+        Add a Slack webhook subscription.
+        
+        Args:
+            webhook: Single Slack webhook URL or list of webhook URLs
+            event_types: Event types to subscribe to
+        """
+        self.add_webhook_subscriptions(webhook, event_types, SlackEventReceiver)
+    
+    def add_chime_webhook(self, webhook: Union[List[str], str], 
+                         event_types: Optional[Union[List[EventType], EventType]] = None):
+        """
+        Add a Chime webhook subscription.
+        
+        Args:
+            webhook: Single Chime webhook URL or list of webhook URLs
+            event_types: Event types to subscribe to
+        """
+        self.add_webhook_subscriptions(webhook, event_types, ChimeEventReceiver)
+    
+    def shutdown(self):
+        """Safely shutdown the bot and clean up all resources."""
+        try:
+            self.remove_webhook_subscriptions()
+        except:
+            pass
+        
+    def __del__(self):
+        """Clean up resources when the Bot is destroyed."""
+        self.shutdown()
 
     def run(self, set_last_run: bool = True):
         """

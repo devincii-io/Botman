@@ -5,6 +5,7 @@ from .btm_types import BotMetrics, BotState
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import copy
+import atexit
 from .events import GLOBAL_EVENT_MANAGER, BotEvent, SlackEventReceiver, ChimeEventReceiver, EventType 
 import uuid
 
@@ -23,6 +24,8 @@ class Botman:
         
         if not GLOBAL_EVENT_MANAGER._running:
             GLOBAL_EVENT_MANAGER.start()
+        
+        atexit.register(self.stop)
 
     def add_bot(self, bot: Bot):
         """
@@ -175,8 +178,8 @@ class Botman:
                 "Botman started",
                 {"bot_count": len(self.bots)}
             ))
-            
-            self._executor.submit(self._loop)
+        
+        self._executor.submit(self._loop)
 
     def stop(self):
         """Stop the bot manager and clean up resources."""

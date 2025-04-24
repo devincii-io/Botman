@@ -3,7 +3,8 @@ import queue
 import threading
 import atexit
 import requests
-EventType = Literal["error", "info", "warning", "debug"]
+import time
+EventType = Literal["error", "info", "warning", "debug", "all"]
 
 class BotEvent:
     """Event object containing information about a bot event."""
@@ -13,6 +14,7 @@ class BotEvent:
         self.event_type = type
         self.description = description
         self.data = data
+        
 
 class EventManager:
     """Manages event subscriptions and publishing for bots."""
@@ -22,6 +24,7 @@ class EventManager:
         self._running = False
         self._lock = threading.Lock()
         self._worker_thread = None
+        atexit.register(self.stop)
     
     def subscribe(self, bot_name: str, callback: callable, event_types: Optional[list[EventType]] = None):
         """
@@ -75,6 +78,7 @@ class EventManager:
                                     print(f"Error in 'all' event callback: {e}")
                 
                 self._queue.task_done()
+                time.sleep(0.5)
             except queue.Empty:
                 pass
     
@@ -94,8 +98,7 @@ class EventManager:
     
     def stop(self):
         """Stop the event processing thread"""
-        with self._lock:
-            self._running = False
+        self._running = False
         
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=5.0)
@@ -157,13 +160,6 @@ GLOBAL_EVENT_MANAGER = EventManager()
 GLOBAL_EVENT_MANAGER.start()
 
 
-def cleanup():
-    """Stop the global event manager at program exit."""
-    GLOBAL_EVENT_MANAGER.stop()
-
-atexit.register(cleanup)
-
-
 
 class SlackEventReceiver:
     def __init__(self, webhook: str):
@@ -185,7 +181,12 @@ class SlackEventReceiver:
             "data": event.data
         }
         
-        requests.post(self.webhook, json=formatted_event)
+        try:
+            # Set low timeout to prevent blocking on shutdown
+            requests.post(self.webhook, json=formatted_event, timeout=5.0)
+        except requests.exceptions.RequestException:
+            # Silently fail on shutdown or connection issues
+            pass
 
 
 class ChimeEventReceiver:
@@ -204,4 +205,9 @@ class ChimeEventReceiver:
         {event.bot_name}
         {event.description}
         """
-        requests.post(self.webhook, json={"content": formatted_markdown_event})
+        try:
+            # Set low timeout to prevent blocking on shutdown
+            requests.post(self.webhook, json={"content": formatted_markdown_event}, timeout=5.0)
+        except requests.exceptions.RequestException:
+            # Silently fail on shutdown or connection issues
+            pass
