@@ -87,7 +87,8 @@ bot = Bot(
     # Retry configuration
     initial_timeout=60,               # Optional: Timeout after failures (seconds)
     retries=3,                        # Optional: Number of retries before timeout
-    retry_delay=10                    # Optional: Delay between retries (seconds)
+    retry_delay=10,                   # Optional: Delay between retries (seconds)
+    is_com_bot=False                  # Optional: Set to True for COM integration on Windows
 )
 ```
 
@@ -259,6 +260,27 @@ Botman uses thread-safe operations to ensure reliable concurrent execution:
 - Event processing occurs in a dedicated thread
 - Proper cleanup occurs on shutdown, including during Python interpreter exit
 
+## COM Integration
+
+Botman supports Windows COM (Component Object Model) integration for bots that need to interact with COM objects:
+
+```python
+# Create a bot that uses COM objects
+com_bot = Bot(
+    name="excel_automation",
+    schedule="0 9 * * 1-5",  # Weekdays at 9:00 AM
+    function=update_excel_report,
+    is_com_bot=True  # Enable COM integration
+)
+```
+
+When `is_com_bot` is set to `True`, Botman will:
+- Initialize the COM environment before executing the bot function
+- Uninitialize the COM environment after execution completes
+- Ensure proper COM threading model is maintained
+
+This is particularly useful for automating Windows applications like Excel, Outlook, or other COM-enabled software.
+
 ## API Reference
 
 ### Botman Class
@@ -289,7 +311,7 @@ botman.set_name(name)              # Set a custom name for this manager
 
 ```python
 # Create a bot instance
-bot = Bot(name, schedule, function, **kwargs)
+bot = Bot(name, schedule, function, **kwargs)  # kwargs includes: initial_timeout, retries, retry_delay, is_com_bot, etc.
 
 # Schedule management
 bot.add_schedule(schedule)         # Add another schedule 
