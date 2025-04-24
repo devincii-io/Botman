@@ -5,6 +5,7 @@ from uuid import uuid4
 from croniter import croniter
 import datetime
 import threading
+import pythoncom
 import atexit
 from .btm_types import BotMetrics, BotState
 from .events import BotEvent, GLOBAL_EVENT_MANAGER, SlackEventReceiver, ChimeEventReceiver
@@ -18,7 +19,7 @@ class Bot:
     def __init__(self, name: str, schedule: List[str] | str, function: Callable, 
                  slack_webhook: List[str] | str = None, chime_webhook: List[str] | str = None,
                  slack_event_types: List[EventType] | EventType = None, chime_event_types: List[EventType] | EventType = None,
-                 initial_timeout: int = 60, retries: int = 3, retry_delay: int = 10):
+                 initial_timeout: int = 60, retries: int = 3, retry_delay: int = 10, is_com_bot: bool = False):
         """
         Initialize a Bot instance.
         
@@ -32,6 +33,7 @@ class Bot:
             chime_event_types: Optional Chime event types to subscribe to
             initial_timeout: Timeout duration in seconds after failures
             retries: Number of retries before entering timeout
+            is_com_bot: Whether the bot is a COM bot
             retry_delay: Seconds to wait between retries
         """
         self.schedule = schedule if isinstance(schedule, list) else [schedule]
@@ -39,7 +41,7 @@ class Bot:
         self.function = function
         self.init_time = datetime.datetime.now()
         self.id = uuid4()
-        
+        self.is_com_bot = is_com_bot
         # Initialize webhook subscriptions tracking
         self._webhook_subscriptions = []
         
@@ -159,7 +161,12 @@ class Bot:
             try:
                 with self._lock:
                     self.metrics.runs += 1
-                    result = self.function()
+                    if self.is_com_bot:
+                        pythoncom.CoInitialize()
+                        result = self.function()
+                        pythoncom.CoUninitialize()
+                    else:
+                        result = self.function()
                     
                     if set_last_run:
                         self.metrics.last_run = datetime.datetime.now()
