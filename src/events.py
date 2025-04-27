@@ -59,7 +59,7 @@ class EventManager:
         """Process events in FIFO order (first in, first out)"""
         while self._running:
             try:
-                event = self._queue.get(block=True, timeout=1.0)
+                event:BotEvent = self._queue.get(block=True, timeout=1.0)
                 
                 with self._lock:
                     if event.bot_name in self.subscriptions:
@@ -178,7 +178,7 @@ class SlackEventReceiver:
             "event_type": event.event_type,
             "description": event.description,
             "emoji": self.event_emoji.get(event.event_type, ""),
-            "data": event.data
+            "data": str(event.data)
         }
         
         try:
