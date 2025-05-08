@@ -207,7 +207,7 @@ class ChimeEventReceiver:
         """
         try:
             # Set low timeout to prevent blocking on shutdown
-            requests.post(self.webhook, json={"content": formatted_markdown_event}, timeout=5.0)
+            requests.post(self.webhook, json={"Content": formatted_markdown_event}, timeout=5.0)
         except requests.exceptions.RequestException:
             # Silently fail on shutdown or connection issues
             pass
