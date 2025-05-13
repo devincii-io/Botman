@@ -201,10 +201,9 @@ class ChimeEventReceiver:
 
     def on_event(self, event: BotEvent):
         formatted_markdown_event = f"""/md
-        {event.event_type} {self.event_emoji.get(event.event_type, "")}
-        {event.bot_name}
-        {event.description}
-        """
+### *{event.event_type}* {self.event_emoji.get(event.event_type, "")}
+{event.bot_name}
+{event.description}"""
         try:
             # Set low timeout to prevent blocking on shutdown
             requests.post(self.webhook, json={"Content": formatted_markdown_event}, timeout=5.0)
