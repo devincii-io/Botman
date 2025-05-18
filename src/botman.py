@@ -1,5 +1,7 @@
 import time
 import threading
+import signal
+import sys
 from .bot import Bot
 from .btm_types import BotMetrics, BotState
 from concurrent.futures import ThreadPoolExecutor
@@ -159,11 +161,19 @@ class Botman:
                 min_next_time = min(next_times)
                 sleep_time = max(0.5, min((min_next_time - now).total_seconds(), 120))
             
+            self._interruptible_sleep(sleep_time)
+            
             if not self.running:
                 break
                 
-            time.sleep(sleep_time)
-    
+    def _interruptible_sleep(self, sleep_time):
+        """Sleep in small increments to allow for fast interruption."""
+        check_interval = 1
+        end_time = time.time() + sleep_time
+        
+        while time.time() < end_time and self.running:
+            time.sleep(min(check_interval, end_time - time.time()))
+
     def start(self):
         """Start the bot manager and begin the scheduling loop."""
         with self._lock:
@@ -245,3 +255,30 @@ class Botman:
     def __del__(self):
         """Ensure everything is cleaned up when Botman is destroyed."""
         self.stop()
+
+    def run_forever(self):
+        """
+        Start Botman and keep the program running until interrupted.
+        This method starts Botman and handles the main running loop with proper signal handling.
+        """
+        def signal_handler(sig, frame):
+            print("\nShutting down Botman...")
+            self.stop()
+            print("Shutdown complete.")
+            sys.exit(0)
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        if not self.running:
+            self.start()
+            
+        try:
+            while self.running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            signal_handler(signal.SIGINT, None)
+        finally:
+            if self.running:
+                self.stop()
+                print("Botman stopped due to exception.")

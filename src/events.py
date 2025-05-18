@@ -159,8 +159,6 @@ class EventManager:
 GLOBAL_EVENT_MANAGER = EventManager()
 GLOBAL_EVENT_MANAGER.start()
 
-
-
 class SlackEventReceiver:
     def __init__(self, webhook: str):
         self.webhook = webhook
@@ -182,10 +180,8 @@ class SlackEventReceiver:
         }
         
         try:
-            # Set low timeout to prevent blocking on shutdown
             requests.post(self.webhook, json=formatted_event, timeout=5.0)
         except requests.exceptions.RequestException:
-            # Silently fail on shutdown or connection issues
             pass
 
 
@@ -205,8 +201,6 @@ class ChimeEventReceiver:
 {event.bot_name}
 {event.description}"""
         try:
-            # Set low timeout to prevent blocking on shutdown
             requests.post(self.webhook, json={"Content": formatted_markdown_event}, timeout=5.0)
         except requests.exceptions.RequestException:
-            # Silently fail on shutdown or connection issues
             pass

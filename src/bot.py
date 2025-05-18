@@ -42,10 +42,8 @@ class Bot:
         self.init_time = datetime.datetime.now()
         self.id = uuid4()
         self.is_com_bot = is_com_bot
-        # Initialize webhook subscriptions tracking
         self._webhook_subscriptions = []
         
-        # Setup webhooks
         if slack_webhook:
             self.add_webhook_subscriptions(slack_webhook, slack_event_types, SlackEventReceiver)
         
@@ -67,7 +65,6 @@ class Bot:
         self._lock = threading.Lock()
         self.event_manager = GLOBAL_EVENT_MANAGER
 
-        # Register cleanup handler
         atexit.register(self.shutdown)
 
         for schedule in self.schedule:
@@ -106,7 +103,6 @@ class Bot:
                 pass
         self._webhook_subscriptions = []
     
-    # Public methods for adding specific webhook types
     def add_slack_webhook(self, webhook: Union[List[str], str], 
                          event_types: Optional[Union[List[EventType], EventType]] = None):
         """
