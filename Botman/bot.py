@@ -252,6 +252,7 @@ class Bot:
             if is_due and set_last_run:
                 with self._lock:
                     self.metrics.last_run = now
+                
             return is_due
         except Exception:
             return False
