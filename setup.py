@@ -4,8 +4,8 @@ setup(
     name="Botman",
     version="0.1.0",
     description="A Python bot management system with scheduling capabilities",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Devin Isaac Worbis",
+    author_email="devinisaac@proton.me",
     packages=find_packages(),
     install_requires=[
         "croniter",
